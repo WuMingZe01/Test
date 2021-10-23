@@ -1,15 +1,13 @@
 import requests
 import time
 import execjs
-import streamlit as st
 
 fileTrain = './data/accTrain.csv'
-# a = input()
-jjTrain = ['000011']
+a = input()
+jjTrain = [a]
 fileTest = './data/accTest.csv'
-jjTest = '000011'
+jjTest = a
 
-@st.cache
 def getUrl(fscode):
     head = 'http://fund.eastmoney.com/pingzhongdata/'
     tail = '.js?v='+ time.strftime("%Y%m%d%H%M%S",time.localtime())
@@ -53,12 +51,6 @@ ACWorthTestFile.close()
 
 
 
-
-my_bar = st.progress(10)
-
-
-with st.spinner('正在进行预测，请耐心等待...'):
-    time.sleep(5)
 # 预测
 import numpy as np
 import pandas as pd
@@ -67,9 +59,6 @@ from keras.models import Sequential
 from keras.layers import Dense
 from keras.layers import LSTM
 from matplotlib import pyplot as plt
-import plotly.figure_factory as ff
-import plotly_express as px
-import streamlit as st
 
 plt.rcParams['font.sans-serif']='SimHei'
 plt.rcParams['axes.unicode_minus']=False
@@ -111,8 +100,6 @@ def build_model():
 seed = 7
 np.random.seed(seed)
 
-my_bar.progress(20)
-
 # 导入数据（训练集）
 with open(fileTrain) as f:
     row = csv.reader(f, delimiter=',')
@@ -146,8 +133,6 @@ with open(fileTrain) as f:
             X_1, y_1 = create_dataset(dataset[m:n])
             X_train = np.append(X_train, X_1)
             y_train = np.append(y_train, y_1)
-
-my_bar.progress(30)
 
 # 导入数据（测试集）
 with open(fileTest) as f:
@@ -213,13 +198,9 @@ y_validation = y_validation.reshape(-1, input_size)
 print('num of X_train: {}\tnum of y_train: {}'.format(len(X_train), len(y_train)))
 print('num of X_validation: {}\tnum of y_validation: {}'.format(len(X_validation), len(y_validation)))
 
-my_bar.progress(40)
-
 # 训练模型
 model = build_model()
 model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size, verbose=1, validation_split=0.25, shuffle=True)
-
-my_bar.progress(60)
 
 # 评估模型
 train_score = model.evaluate(X_train, y_train, verbose=0)
@@ -227,8 +208,6 @@ validation_score = model.evaluate(X_validation, y_validation, verbose=0)
 
 # 预测
 predict_validation = model.predict(X_validation)
-
-my_bar.progress(80)
 
 #将之前虚构的最后一组input_size里面的0涨跌改为NAN（不显示虚假的0）
 if forget_days < input_size:
@@ -252,11 +231,3 @@ plt.plot(predict_validation, color='red', label='预测每日涨幅')
 plt.legend(loc='upper left')
 plt.title('关联组数：{}组，预测天数：{}天，回退天数：{}天'.format(time_step, input_size, forget_days))
 plt.show()
-my_bar.progress(100)
-
-for percent_complete in range(100):
-    time.sleep(0.1)
-    my_bar.progress(percent_complete + 1)
-st.success('Done!')
-
-st.pyplot(fig)

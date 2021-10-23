@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
 import plotly.figure_factory as ff
 import akshare as ak
 import plotly_express as px
@@ -15,7 +16,7 @@ image1 = Image.open('img/img.jpeg')
 st.sidebar.image(image, use_column_width=True)
 choose = st.sidebar.radio(
 "请选择您要查看的内容：",
-('基金查询','基金经理', '基金排行'))
+('基金查询','基金经理', '基金排行','市场情绪'))
 if choose == '基金查询':
     st.image(image1, use_column_width=True)
     mydict = {}
@@ -49,7 +50,7 @@ if choose == '基金查询':
 
     fund = fund_em_info_df
 
-    fund = fund.to_csv('fund.csv', index=None)
+    fund = fund.to_csv('fund.csv', encoding='utf_8',index=None)
     df = pd.read_csv('fund.csv')
 
     st.dataframe(df, width=930, height=330)
@@ -187,55 +188,6 @@ if choose == '基金查询':
     import time
     import execjs
 
-    fileTrain = './data/accTrain.csv'
-    jjTrain = [id]
-    fileTest = './data/accTest.csv'
-    jjTest = id
-
-
-    def getUrl(fscode):
-        head = 'http://fund.eastmoney.com/pingzhongdata/'
-        tail = '.js?v=' + time.strftime("%Y%m%d%H%M%S", time.localtime())
-        return head + fscode + tail
-
-
-    # 根据基金代码获取净值
-    def getWorth(fscode):
-        content = requests.get(getUrl(fscode))
-        jsContent = execjs.compile(content.text)
-        # 单位净值走势
-        netWorthTrend = jsContent.eval('Data_netWorthTrend')
-        # 累计净值走势
-        ACWorthTrend = jsContent.eval('Data_ACWorthTrend')
-        netWorth = []
-        ACWorth = []
-        for dayWorth in netWorthTrend[::-1]:
-            netWorth.append(dayWorth['y'])
-        for dayACWorth in ACWorthTrend[::-1]:
-            ACWorth.append(dayACWorth[1])
-        return netWorth, ACWorth
-
-
-    ACWorthFile = open(fileTrain, 'w')
-    for code in jjTrain:
-        try:
-            _, ACWorth = getWorth(code)
-        except:
-            continue
-        if len(ACWorth) > 0:
-            ACWorthFile.write(",".join(list(map(str, ACWorth))))
-            ACWorthFile.write("\n")
-            print('{} data downloaded1'.format(code))
-    ACWorthFile.close()
-
-    ACWorthTestFile = open(fileTest, 'w')
-    _, ACWorth = getWorth(jjTest)
-    if len(ACWorth) > 0:
-        ACWorthTestFile.write(",".join(list(map(str, ACWorth))))
-        ACWorthTestFile.write("\n")
-        print('{} data downloaded'.format(jjTest))
-    ACWorthTestFile.close()
-
     st.markdown(
         """
         <style>
@@ -249,204 +201,132 @@ if choose == '基金查询':
 
     with st.spinner('正在进行预测，请耐心等待...'):
         time.sleep(5)
-    # 预测
-    import numpy as np
-    import pandas as pd
-    import csv
-    from keras.models import Sequential
-    from keras.layers import Dense
-    from keras.layers import LSTM
-    from matplotlib import pyplot as plt
-    import plotly.figure_factory as ff
-    import plotly_express as px
-    import streamlit as st
 
-    plt.rcParams['font.sans-serif'] = 'SimHei'
+    # LSTM，多特征值预测基于用户情感倾向
+
+    import requests
+    from typing import Tuple
+    import pandas as pd
+    import numpy as np
+    from sklearn.preprocessing import MinMaxScaler
+    from tensorflow.keras.layers import LSTM, Dense
+    from tensorflow.keras.models import Sequential
+    import matplotlib.pyplot as plt
+    from urllib.parse import urlencode
+    fig = plt.figure(figsize=(15, 6))
+
+    plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']
     plt.rcParams['axes.unicode_minus'] = False
 
-    batch_size = 4
-    epochs = 50
-    time_step = 4  # 用多少组天数进行预测
-    input_size = 3  # 每组天数，亦即预测天数
-    look_back = time_step * input_size
-    showdays = 120  # 最后画图观察的天数（测试天数）
-
-    X_train = []
-    y_train = []
-    X_validation = []
-    y_validation = []
-    testset = []  # 用来保存测试基金的近期净值
-
-    # 忽略掉最近的forget_days天数据（回退天数，用于预测的复盘）
-    forget_days = 1
-
-
-    def create_dataset(dataset):
-        dataX, dataY = [], []
-        print('len of dataset: {}'.format(len(dataset)))
-        for i in range(0, len(dataset) - look_back, input_size):
-            x = dataset[i: i + look_back]
-            dataX.append(x)
-            y = dataset[i + look_back: i + look_back + input_size]
-            dataY.append(y)
-        return np.array(dataX), np.array(dataY)
-
-
-    def build_model():
-        model = Sequential()
-        model.add(LSTM(units=128, input_shape=(time_step, input_size)))
-        model.add(Dense(units=input_size))
-        model.compile(loss='mean_squared_error', optimizer='adam')
-        return model
-
-
-    # 设定随机数种子
-    seed = 7
-    np.random.seed(seed)
-
     my_bar.progress(20)
+    def split_sequences(X: np.ndarray, time_steps: int = 30) -> Tuple[np.ndarray, np.ndarray]:
+        '''
+        生成输入输出序列
 
-    # 导入数据（训练集）
-    with open(fileTrain) as f:
-        row = csv.reader(f, delimiter=',')
-        for r in row:
-            dataset = []
-            r = [x for x in r if x != 'None']
-            # 涨跌幅是2天之间比较，数据会减少1个
-            days = len(r) - 1
-            # 有效天数太少，忽略
-            if days <= look_back + input_size:
-                continue
-            for i in range(days):
-                f1 = float(r[i])
-                f2 = float(r[i + 1])
-                if f1 == 0 or f2 == 0:
-                    dataset = []
-                    break
-                # 把数据放大100倍，相当于以百分比为单位
-                f2 = (f2 - f1) / f1 * 100
-                # 如果涨跌幅绝对值超过15%，基金数据恐有问题，忽略该组数据
-                if f2 > 15 or f2 < -15:
-                    dataset = []
-                    break
-                dataset.append(f2)
-            n = len(dataset)
-            # 进行预测的复盘，忽略掉最近forget_days的训练数据
-            n -= forget_days
-            if n >= look_back + input_size:
-                # 如果数据不是input_size的整数倍，忽略掉最前面多出来的
-                m = n % input_size
-                X_1, y_1 = create_dataset(dataset[m:n])
-                X_train = np.append(X_train, X_1)
-                y_train = np.append(y_train, y_1)
+        参数
+        ---
+        X : m 行 n 列 array ，其中最后一列为待输出的输出，前面的均为待输入的数据
+        time_steps : 时间步长，即使用前 time_steps 给数据来预测下一个数据
 
+        返回
+        ---
+        生成的 X 和 y array
+
+        '''
+        if not isinstance(X, np.ndarray):
+            X = np.array(X)
+        length = len(X)
+        n_features = X.shape[1] - 1
+        _X = []
+        _y = []
+        for start_idx in range(length):
+            end_idx = start_idx + time_steps
+            if end_idx >= length:
+                break
+            _X.append(X[start_idx:end_idx, :-1])
+            _y.append(X[end_idx - 1, -1])
+        _X = np.array(_X)
+        _X = _X.reshape((-1, time_steps, n_features))
+        _y = np.array(_y)
+        return (_X, _y)
+
+
+    # 读取股票信息表格
+    df = pd.read_csv('./fund_emotion/data_merge_lstm/fund_Price_fill.csv')
+    # 删除缺少值
+    df = df.dropna()
     my_bar.progress(30)
+    # 指定研究的特征（最后一个为待预测的数据!）
+    features = ['累计净值', '情绪指数', '日增长率', '单位净值']
 
-    # 导入数据（测试集）
-    with open(fileTest) as f:
-        row = csv.reader(f, delimiter=',')
-        # 写成了循环，但实际只有1条测试数据
-        for r in row:
-            dataset = []
-            # 去掉记录为None的数据（当天数据缺失）
-            r = [x for x in r if x != 'None']
-            # 涨跌幅是2天之间比较，数据会减少1个
-            days = len(r) - 1
-            # 有效天数太少，忽略，注意：测试集最后会虚构一个input_size
-            if days <= look_back:
-                print('only {} days data. exit.'.format(days))
-                continue
-            # 只需要最后画图观察天数的数据
-            if days > showdays:
-                r = r[days - showdays:]
-                days = len(r) - 1
-            for i in range(days):
-                f1 = float(r[i])
-                f2 = float(r[i + 1])
-                if f1 == 0 or f2 == 0:
-                    print('zero value found. exit.')
-                    dataset = []
-                    break
-                # 把数据放大100倍，相当于以百分比为单位
-                f2 = (f2 - f1) / f1 * 100
-                # 如果涨跌幅绝对值超过15%，基金数据恐有问题，忽略该组数据
-                if f2 > 15 or f2 < -15:
-                    print('{} greater then 15 percent. exit.'.format(f2))
-                    dataset = []
-                    break
-                testset.append(f1)
-                dataset.append(f2)
-            # 保存最近一天基金净值
-            f1 = float(r[days])
-            testset.append(f1)
-            # 测试集虚构一个input_size的数据（若有forget_days的数据，则保留）
-            if forget_days < input_size:
-                for i in range(forget_days, input_size):
-                    dataset.append(0)
-                    testset.append(np.nan)
-            else:
-                dataset = dataset[:len(dataset) - forget_days + input_size]
-                testset = testset[:len(testset) - forget_days + input_size]
-            if len(dataset) >= look_back + input_size:
-                # 将testset修正为input_size整数倍加1
-                m = (len(testset) - 1) % input_size
-                testset = testset[m:]
-                m = len(dataset) % input_size
-                # 将dataset修正为input_size整数倍
-                X_validation, y_validation = create_dataset(dataset[m:])
+    # 创建一个 MinMaxScaler 对象，方便将数据归一化
+    # 归一化公式：x =  (x - min)/(max-min)
+    sc = MinMaxScaler(feature_range=(0, 1))
 
-    # 将输入转化成[样本数，时间步长，特征数]
-    X_train = X_train.reshape(-1, time_step, input_size)
-    X_validation = X_validation.reshape(-1, time_step, input_size)
+    # 将数据转为 numpy 数组
+    values = df[features].to_numpy()
 
-    # 将输出转化成[样本数，特征数]
-    y_train = y_train.reshape(-1, input_size)
-    y_validation = y_validation.reshape(-1, input_size)
+    # 归一化 values
+    scaled_values = sc.fit_transform(values)
 
-    print('num of X_train: {}\tnum of y_train: {}'.format(len(X_train), len(y_train)))
-    print('num of X_validation: {}\tnum of y_validation: {}'.format(len(X_validation), len(y_validation)))
+    # 生成序列
+    X, y = split_sequences(scaled_values)
 
-    my_bar.progress(40)
+    # 训练数据个数
+    train_size = int(len(df) * 0.6)
 
-    # 训练模型
-    model = build_model()
-    model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size, verbose=1, validation_split=0.25, shuffle=True)
+    # 训练集
+    X_train = X[:train_size]
+    y_train = y[:train_size]
+
+    # 测试集
+    X_test = X[train_size:]
+    y_test = y[train_size:]
 
     my_bar.progress(60)
 
-    # 评估模型
-    train_score = model.evaluate(X_train, y_train, verbose=0)
-    validation_score = model.evaluate(X_validation, y_validation, verbose=0)
+    # 创建模型
+    model = Sequential()
+    # 添加 含有 50 个单元的 LSTM 网络(第一层)
+    model.add(LSTM(50, return_sequences=True))
+    # 添加 含有 30 个单元的 LSTM 网络(第二层)
+    model.add(LSTM(30, return_sequences=True))
+    # 添加 含有 10 个单元的 LSTM 网络(第三层)
+    # 注意，最后一层没有 return_sequences = True ！！！
+    model.add(LSTM(10))
 
-    # 预测
-    predict_validation = model.predict(X_validation)
+    # 添加输出层网络以输出预测的股票收盘价格
+    model.add(Dense(1))
+    # 编译模型
+    model.compile(loss='mae', optimizer='adam')
+    # 拟合模型
+    model.fit(X_train, y_train, epochs=30, validation_split=0.2)
 
     my_bar.progress(80)
+    # 真实收盘价格
+    y_real = values[-len(y_test):, -1]
+    plt.plot(y_real, label='真实基金价格')
 
-    # 将之前虚构的最后一组input_size里面的0涨跌改为NAN（不显示虚假的0）
-    if forget_days < input_size:
-        for i in range(forget_days, input_size):
-            y_validation[-1, i] = np.nan
+    y_p = model.predict(X_test).reshape(-1, 1)
+    # 将全部收盘价归一化
+    sc.fit_transform(df['单位净值'].to_numpy().reshape(-1, 1))
 
-    print('Train Set Score: {:.3f}'.format(train_score))
-    print('Test Set Score: {:.3f}'.format(validation_score))
-    print('未来{}天实际百分比涨幅为：{}'.format(input_size, y_validation[-1]))
-    print('未来{}天预测百分比涨幅为：{}'.format(input_size, predict_validation[-1]))
+    # 归一化逆过程，即将归一化的数据转为真实数据
+    # 预测的收盘价格
+    y_p = sc.inverse_transform(y_p.reshape(-1, 1))
+    # 绘图
 
-    # 进行reshape(-1, 1)是为了plt显示
-    y_validation = y_validation.reshape(-1, 1)
-    predict_validation = predict_validation.reshape(-1, 1)
-    testset = np.array(testset).reshape(-1, 1)
-
-    # 图表显示
-    fig = plt.figure(figsize=(15, 6))
-    plt.plot(y_validation, color='blue', label='基金每日涨幅')
-    plt.plot(predict_validation, color='red', label='预测每日涨幅')
-    plt.legend(loc='upper left')
-    plt.title('关联组数：{}组，预测天数：{}天，回退天数：{}天'.format(time_step, input_size, forget_days))
+    plt.plot(y_p, label='预测基金价格')
+    # 绘制图例
+    plt.legend()
+    # 绘制标题
+    plt.title('根据 {} 预测 {} 的基金走势'.format("、".join(features[:-1]), 110022))
+    # 保存图片
+    plt.savefig(f'110022.jpg')
+    # 显示图像
     plt.show()
-    my_bar.progress(100)
 
+    my_bar.progress(100)
     for percent_complete in range(100):
         time.sleep(0.1)
         my_bar.progress(percent_complete + 1)
@@ -463,12 +343,31 @@ elif choose == '基金排行':
     fund_em_open_fund_rank_df = fund_em_open_fund_rank_df.drop(['序号'],axis=1)
     st.write(fund_em_open_fund_rank_df)
 
+    fund_em_open_fund_rank_df = pd.DataFrame(fund_em_open_fund_rank_df)
+    fund_em_open_fund_rank_df = fund_em_open_fund_rank_df.sort_values(by='近1年', ascending=False)
+    fund_em_open_fund_rank_df = fund_em_open_fund_rank_df.reset_index(drop=True)
+    fund_em_open_fund_rank_df = fund_em_open_fund_rank_df.head(10)
+    fund_em_open_fund_rank_df = fund_em_open_fund_rank_df.sort_values(by='近1年', ascending=True)
+    def get_Top():
+        fig = px.bar(fund_em_open_fund_rank_df, y='基金简称', x='近1年',
+                     hover_data=['近1年'],
+                     color='近1年', # 指定柱状图颜色根据 lifeExp字段数值大小自动着色
+                     labels={'pop':'population of Canada'},
+                     height=600, # 图表高度
+                     width=800, # 图表宽度
+                     title='公募基金涨幅Top10（近一年）',
+                     orientation='h' # 条形图设置参数
+                    )
+        st.plotly_chart(fig)
+    Top = get_Top()
 
 elif choose == '基金经理':
     st.subheader('基金经理信息：')
     manager = pd.read_csv('fund_manager.csv')
     manager.sort_values("现任基金资产总规模", inplace=True, ascending=False)
     manager_guimo = manager.head(10)
+    df = pd.read_csv("./fund_emotion/manager.csv")
+    df = pd.DataFrame(df)
 
     # 管理规模
     def get_guimo():
@@ -552,10 +451,79 @@ elif choose == '基金经理':
         )
         st.plotly_chart(fig)
 
+
+    def get_duibi():
+        fig = px.scatter_3d(df,
+                            x='累计从业时间',
+                            y='现任基金资产总规模',
+                            z='现任基金最佳回报',
+                            color='现任基金最佳回报',
+                            size_max=18,
+                            opacity=0.7,
+                            title='从业时间(天)-管理资产规模(亿)-最佳回报(%)对比'
+                            )
+
+        st.plotly_chart(fig)
+
+
     manager1 = get_guimo()
     manager2 = get_huibao()
     manager3 = get_time()
+    manager4 = get_duibi()
 
+elif choose == '市场情绪':
+    st.subheader('（易方达消费行业股票吧）市场情绪：')
+    image2 = Image.open('img/img3.jpg')
+    st.image(image2, use_column_width=True)
+    comment = pd.read_csv('./fund_emotion/110022_guba_snownlp_nb_1.csv')
+    comment = pd.DataFrame(comment)
+    bl = comment['nb_result'].value_counts()
+    comment['year'] = comment['time'].map(lambda x: x.split('/')[0])
+    b2 = comment['year']
+    comment_fl = pd.read_csv('./fund_emotion/comment_frequency.csv')
+    comment_fl = pd.DataFrame(comment_fl)
+    comment_f2 = pd.read_csv('./fund_emotion/110022_guba_snownlp_nb_2.csv')
+    comment_f2 = pd.DataFrame(comment_f2)
+    def get_bili():
+        # 圆环图
+        df = px.data.tips()
+        fig = px.pie(
+                    bl,
+                    values='nb_result',
+                    color_discrete_sequence=px.colors.sequential.Bluyl,
+                    hole=0.6,  # 设置空心半径比例
+                    title='市场情绪（积极/消极）',
+                    )
+        st.plotly_chart(fig)
+
+    def get_bili1():
+        fig = px.bar(comment_fl,
+                     y='shuliang',
+                     x='fenshu',
+                     title='市场情绪评分分布情况：',
+                     color='shuliang'
+                         )
+        st.plotly_chart(fig)
+
+
+    def get_bili2():
+        fig = px.bar(comment_f2,
+                     x="month",
+                     y=["good", "negative"],
+                     title='市场情绪指数对比（月份）',
+                     )
+        st.plotly_chart(fig)
+
+    def get_bili3():
+        st.subheader('基金贴吧热词（Top-50）：')
+        image = Image.open('./fund_emotion/data_merge_lstm/fund_cloud.jpg')
+        st.image(image, caption='Sunrise by the mountains',
+        use_column_width = True)
+
+    comment1 = get_bili()
+    comment2 = get_bili1()
+    comment3 = get_bili2()
+    comment4 = get_bili3()
 
 
 
